@@ -2,22 +2,115 @@ import numpy as np
 from fastprogress import master_bar, progress_bar
 
 
+
+def GA(nRuns, numGens, popSize, numSurvive,
+       numStacks, bix2, minNa, weights, xoverProb, mutRates,
+       progress, save, filePath=None):
+    
+    for n in range(nRuns):
+        print('Run %2d' % (n+1))
+
+        firstFound = False
+        consistentStacks = np.empty([0, numStacks, 7], dtype='int')
+
+        # initialize random population
+        pop = population(popSize, numStacks, bix2, minNa, weights)
+
+
+        if progress:
+
+            # keep track of fitness distribution and quantiles
+            fitnessDist = np.zeros([numGens + 1, popSize])
+            fitnessQuantiles = np.zeros([numGens + 1, 4])
+            bestRewards = np.zeros([numGens + 1, 3])
+
+            allFits = pop.getAllFits()
+            fitnessDist[0] = allFits
+            fitnessQuantiles[0] = np.quantile(pop.getAllFits(), [0.25, 0.50, 0.75, 1.00])
+            bestRewards[0] = pop.individuals[np.argsort(allFits)[-1]].fitnessDetails[:3]
+
+            # progress bar for monitoring fitness distribution over the generations
+            progBar = master_bar(range(1, numGens + 1))
+            progBar.names = ['', '', 'tad', 'K-th', 'SUSY', 'max', 'Q75', 'Q50', 'Q25']
+            gIter = progBar
+
+        else:
+            gIter = range(1, numGens + 1)
+
+
+        for g in gIter:
+
+            # breed next generation (this is quick)
+            pop.breed(numSurvive, xoverProb, mutRates)
+
+            # compute fitness for all new individuals of population
+            if progress:
+                iIter = progress_bar(range(popSize), parent=progBar)
+            else:
+                iIter = range(popSize)
+
+            for i in iIter:
+                pop.individuals[i].updateFitness()
+
+            if len(pop.getConsistent()) > 0:
+                if not firstFound:
+                    firstFound = True
+                    print('\tFirst found at generation : %4d' % g)
+
+                consistentStacks = np.append(consistentStacks,
+                                             [e.stacks for e in pop.getConsistent()], axis=0)
+
+            if progress:
+                # update fitness summary statistics
+                allFits = pop.getAllFits()
+                fitnessDist[g] = allFits
+                fitnessQuantiles[g] = np.quantile(allFits, [0.25, 0.50, 0.75, 1.00])
+                bestRewards[g] = pop.individuals[np.argsort(allFits)[-1]].fitnessDetails[:3]
+
+                # update graph of fitness summary statistics
+                progBar.update_graph([
+                    [[0, g], [1, 1]],
+                    [[1.05*g, 2.05*g], [1, 1]],
+                    [np.arange(1.05*g, 2.05*g+1), bestRewards[:g+1, 0]],
+                    [np.arange(1.05*g, 2.05*g+1), bestRewards[:g+1, 1]],
+                    [np.arange(1.05*g, 2.05*g+1), bestRewards[:g+1, 2]],
+                    [np.arange(g+1), fitnessQuantiles[:g+1, 3]],
+                    [np.arange(g+1), fitnessQuantiles[:g+1, 2]],
+                    [np.arange(g+1), fitnessQuantiles[:g+1, 1]],
+                    [np.arange(g+1), fitnessQuantiles[:g+1, 0]]
+                ], [-0.1*g, 2.3*g], [0, 1.05], figsize=(14, 8))
+
+        if firstFound:
+            print('\t' + ' '*10 + 'Solutions found : %4d' % len(consistentStacks))
+
+            consistentStacks = np.unique(consistentStacks, axis=0)
+
+            print('\t' + ' '*3 + 'Unique solutions found : %4d' % len(consistentStacks))
+
+        if save:
+            saveSolutions(consistentStacks, filePath)
+
+        print('')
+
+
+
+
 class population:
-    def __init__(self, size, numStacks, bix2, minNa, weights, filler):
+    def __init__(self, size, numStacks, bix2, minNa, weights):
         self.size = size
 
-        self.elements = [element(numStacks, bix2, minNa, weights, filler) for i in range(size)]
-        self.elements = np.array(self.elements)
-        for e in self.elements:
+        self.individuals = [individual(numStacks, bix2, minNa, weights) for i in range(size)]
+        self.individuals = np.array(self.individuals)
+        for e in self.individuals:
             e.updateFitness()
 
 
     def breed(self, numSurvive, xoverProb, mutRates):
 
         # create empty array for next generation and copy
-        # over 'numSurvive' of the fittest elements
-        newElements = np.empty([self.size], dtype='object')
-        newElements[:numSurvive] = self.getFittest(numSurvive)
+        # over 'numSurvive' of the fittest individuals
+        newIndividuals = np.empty([self.size], dtype='object')
+        newIndividuals[:numSurvive] = self.getFittest(numSurvive)
 
         # loop until next generation is full
         for i in range(numSurvive, self.size):
@@ -38,171 +131,49 @@ class population:
             child.standardize()
 
             # add child to next generation
-            newElements[i] = child
+            newIndividuals[i] = child
 
         # update population to newly created generation
-        self.elements = newElements
+        self.individuals = newIndividuals
 
 
     def binaryTournament(self):
-        # select two random elements and return the fittest
+        # select two random individuals and return the fittest
         i, j = np.random.randint(self.size, size=2)
 
-        if self.elements[i].fitness > self.elements[j].fitness:
-            return self.elements[i]
+        if self.individuals[i].fitness > self.individuals[j].fitness:
+            return self.individuals[i]
         else:
-            return self.elements[j]
+            return self.individuals[j]
 
 
     def getAllFits(self):
-        # returns list of the fitness for all elements in the population
-        return [e.fitness for e in self.elements]
+        # returns list of the fitness for all individuals in the population
+        return [e.fitness for e in self.individuals]
 
 
     def getFittest(self, n):
-        # returns the n fittest elements in the population
+        # returns the n fittest individuals in the population
         fits = self.getAllFits()
         bestn = np.argsort(fits)[-1:-(n+1):-1]
-        return self.elements[bestn]
+        return self.individuals[bestn]
 
     def getConsistent(self):
-        return self.elements[[e.isConsistent() for e in self.elements]]
+        return self.individuals[[e.isConsistent() for e in self.individuals]]
 
     def displayFittest(self, n):
-        # display the n fittest elements in the population
+        # display the n fittest individuals in the population
         for e in self.getFittest(n):
             e.display()
 
 
-def saveSolutions(stacks, filePath):
 
-    # try:
-    #     # load previously saved solutions
-    #     saved = np.load(filePath)
-    #     # add new solutions and remove duplicates
-    #     toSave = np.unique(np.append(saved, stacks, axis=0), axis=0)
-    #     newlySaved = len(toSave) - len(saved)
-    # except FileNotFoundError:
-    #     # no previously saved solutions
-    #     # just remove duplicates
-    #     toSave = np.unique(stacks, axis=0)
-    #     newlySaved = len(toSave)
-    
-    # # save to file
-    # np.save(filePath, toSave)
-    
-    # print('\t' + ' '*6 + 'New solutions saved : %4d' % newlySaved)
-
-    try:
-        saved = np.load(filePath)
-        toSave = np.append(saved, len(stacks))
-    except FileNotFoundError:
-        toSave = np.array([len(stacks)])
-
-    np.save(filePath, toSave)
-
-
-
-
-def GA(nRuns, numGens, popSize, numSurvive, filler,
-       numStacks, bix2, minNa, weights, xoverProb, mutRates,
-       progress, save, filePath=None):
-    
-    for n in range(1, nRuns+1):
-        print('Run %2d' % n)
-
-        firstFound = False
-        consistentStacks = np.empty([0, numStacks, 7], dtype='int')
-
-        # initialize random population
-        pop = population(popSize, numStacks, bix2, minNa, weights, filler)
-
-
-        if progress:
-
-            # keep track of fitness distribution and quantiles
-            fitnessDist = np.zeros([numGens + 1, popSize])
-            fitnessQuantiles = np.zeros([numGens + 1, 4])
-            bestRewards = np.zeros([numGens + 1, 3])
-
-            allFits = pop.getAllFits()
-            fitnessDist[0] = allFits
-            fitnessQuantiles[0] = np.quantile(pop.getAllFits(), [0.25, 0.50, 0.75, 1.00])
-            bestRewards[0] = pop.elements[np.argsort(allFits)[-1]].fitnessDetails[:3]
-
-            # progress bar for monitoring fitness distribution over the generations
-            progBar = master_bar(range(1, numGens + 1))
-            progBar.names = ['', '', 'tad', 'K-th', 'SUSY', 'max', 'Q75', 'Q50', 'Q25']
-            gIter = progBar
-
-        else:
-            gIter = range(1, numGens + 1)
-
-
-        for g in gIter:
-
-            # breed next generation (this is quick)
-            pop.breed(numSurvive, xoverProb, mutRates)
-
-            # compute fitness for all new elements of population
-            if progress:
-                iIter = progress_bar(range(popSize), parent=progBar)
-            else:
-                iIter = range(popSize)
-
-            for i in iIter:
-                pop.elements[i].updateFitness()
-
-            if len(pop.getConsistent()) > 0:
-                if not firstFound:
-                    firstFound = True
-                    print('\tFirst found at generation : %4d' % g)
-
-                consistentStacks = np.append(consistentStacks,
-                                             [e.stacks for e in pop.getConsistent()], axis=0)
-
-            if progress:
-                # update fitness summary statistics
-                allFits = pop.getAllFits()
-                fitnessDist[g] = allFits
-                fitnessQuantiles[g] = np.quantile(allFits, [0.25, 0.50, 0.75, 1.00])
-                bestRewards[g] = pop.elements[np.argsort(allFits)[-1]].fitnessDetails[:3]
-
-                # update graph of fitness summary statistics
-                progBar.update_graph([
-                    [[0, g], [1, 1]],
-                    [[1.05*g, 2.05*g], [1, 1]],
-                    [np.arange(1.05*g, 2.05*g+1), bestRewards[:g+1, 0]],
-                    [np.arange(1.05*g, 2.05*g+1), bestRewards[:g+1, 1]],
-                    [np.arange(1.05*g, 2.05*g+1), bestRewards[:g+1, 2]],
-                    [np.arange(g+1), fitnessQuantiles[:g+1, 3]],
-                    [np.arange(g+1), fitnessQuantiles[:g+1, 2]],
-                    [np.arange(g+1), fitnessQuantiles[:g+1, 1]],
-                    [np.arange(g+1), fitnessQuantiles[:g+1, 0]]
-                ], [-0.1*g, 2.3*g], [0, 1.05], figsize=(14, 8))
-
-        if firstFound:
-            consistentStacks = np.unique(consistentStacks, axis=0)
-
-            print('\t' + ' '*10 + 'Solutions found : %4d' % len(consistentStacks))
-
-        if save:
-            saveSolutions(consistentStacks, filePath)
-
-        print('')
-
-
-
-
-
-
-class element:
-    def __init__(self, numStacks, bix2, minNa, weights, filler):
+class individual:
+    def __init__(self, numStacks, bix2, minNa, weights):
         self.numStacks = numStacks
         self.bix2 = bix2
         self.minNa = minNa
         self.weights = weights
-        self.filler = filler
 
         self.stacks = np.array([randomStack() for i in range(numStacks)])
 
@@ -227,26 +198,26 @@ class element:
 
             fillerNa = np.zeros(4)
 
-            if self.filler:
-                # !!
-                # THIS NEEDS TO BE CHANGED FOR NONZERO bix2
-                # !!
+            # if self.filler:
+            #     # !!
+            #     # THIS NEEDS TO BE CHANGED FOR NONZERO bix2
+            #     # !!
 
-                # add filler branes to automatically satisfy tadpole cancellation
-                fillerNa = [max(0, -tad) for tad in tadpoles]
-                Ns = np.append(Ns, fillerNa)
+            #     # add filler branes to automatically satisfy tadpole cancellation
+            #     fillerNa = [max(0, -tad) for tad in tadpoles]
+            #     Ns = np.append(Ns, fillerNa)
 
 
-                XYlist = np.append(XYlist, [[1, 0, 0, 0, 0, 0, 0, 0],
-                                            [0, 1, 0, 0, 0, 0, 0, 0],
-                                            [0, 0, 1, 0, 0, 0, 0, 0],
-                                            [0, 0, 0, 1, 0, 0, 0, 0]], axis=0)
+            #     XYlist = np.append(XYlist, [[1, 0, 0, 0, 0, 0, 0, 0],
+            #                                 [0, 1, 0, 0, 0, 0, 0, 0],
+            #                                 [0, 0, 1, 0, 0, 0, 0, 0],
+            #                                 [0, 0, 0, 1, 0, 0, 0, 0]], axis=0)
 
-                Xlist = XYlist[:, :4]
-                Ylist = XYlist[:, 4:]
+            #     Xlist = XYlist[:, :4]
+            #     Ylist = XYlist[:, 4:]
 
-                # these should now all be zero
-                tadpoles = np.dot(Ns, Xlist) - 8
+            #     # these should now all be zero
+            #     tadpoles = np.dot(Ns, Xlist) - 8
 
 
             # K-theory constraint
@@ -254,7 +225,7 @@ class element:
 
 
             # SUSY condition
-            susyBest, uBest, Xterms, Yterms = SUSY(Ns, XYlist)
+            valBest, uBest, Xterms, Yterms = SUSY(Ns, XYlist)
 
 
             # tadReward = np.mean([(1 + abs(tad/8.0))**(-1) for tad in tadpoles])
@@ -307,7 +278,7 @@ class element:
     def clone(self):
 
         # create child with same Na & winding numbers
-        child = element(self.numStacks, self.bix2, self.minNa, self.weights, self.filler)
+        child = individual(self.numStacks, self.bix2, self.minNa, self.weights)
         child.stacks = self.stacks
 
         return child
@@ -337,7 +308,7 @@ class element:
 
 
         # create child and set Na & winding numbers
-        child = element(self.numStacks, self.bix2, self.minNa, self.weights, self.filler)
+        child = individual(self.numStacks, self.bix2, self.minNa, self.weights)
         child.stacks = newStacks
 
         return child
@@ -532,7 +503,7 @@ class element:
 def randomStack():
     s = np.zeros(7, dtype='int')
     s[0] = np.random.geometric(0.5)
-    s[1:] = np.random.binomial(2*20, 0.5, size=6) - 20
+    s[1:] = randomBnml(20, 6)
 
     return s
 
@@ -585,8 +556,8 @@ def SUSY(Ns, XYlist):
     # the rest: two or more YI are nonzero
     others = np.where((zeroYcounts <= 2) * (Ns > 0))[0]
 
-    susyBest = np.inf
-    uBest = [1, 1, 1, 1]
+    valBest = np.inf
+    uBest = [0, 0, 0, 0]
     XtermsBest = np.inf * np.ones(len(Ns))
     YtermsBest = np.inf * np.ones(len(Ns))
 
@@ -597,13 +568,15 @@ def SUSY(Ns, XYlist):
             matrix = Ylist[inds, 1:]
 
             if np.linalg.det(matrix) != 0:
-                uiInv = np.dot(np.linalg.inv(matrix), -Ylist[inds, 0])
+                uiinv = np.dot(np.linalg.inv(matrix), -Ylist[inds, 0])
+                uIinv = np.block([1, uiinv])
 
-                if min(uiInv) < eps or max(uiInv) > 1/eps:
-                    # ratios of moduli must not be too large or too small
+                if min(uIinv) / max(uIinv) < eps:
+                    # moduli must not be negative and the ratios
+                    # must not be too large or too small
                     continue
 
-                uI = np.block([1, 1/uiInv])
+                uI = 1/uIinv
                 uI /= np.sqrt(uI@uI)
 
                 Xterms = np.array([np.minimum(0, np.sign(Ns[a]) * Xlist[a] @ uI)
@@ -611,73 +584,115 @@ def SUSY(Ns, XYlist):
 
                 Yterms = np.array([np.sign(Ns[a]) * Ylist[a] @ (1/uI) for a in range(len(Ylist))])
 
-                val = Yterms@Yterms + Xterms@Xterms
+                val = Xterms@Xterms + Yterms@Yterms
 
-                if val < susyBest:
-                    susyBest = val
+                if val < valBest:
+                    valBest = val
                     uBest = uI
                     XtermsBest = Xterms
                     YtermsBest = Yterms
 
-
-    if susyBest == np.inf:
-        # optimize
+    # if len(others) == 2:
         
-        bounds = [(eps, 1), (eps, 1), (eps, 1), (eps, 1)]
-        # cons = ({'type': 'eq', 'fun': S3})
+    #     # random order of indices I=0,1,2,3 for UI
+    #     # the first is held fixed at one and the last two
+    #     # are solved for in terms of the second, which is free
+    #     Iorder = np.random.choice(range(4), size=4, replace=False)
 
-        # result = minimize(SUSYfunc, x0=(0.5, 0.5, 0.5, 0.5), args=(Ns, Xlist, Ylist),
-        #                   method='SLSQP', bounds=bounds, constraints=cons)
+    #     matrix = Ylist[others, Iorder[-2:]]
 
-        # susyBest = result.fun
-        # uBest = result.x
+    #     if np.linalg.det(matrix) != 0:
 
-        # Xterms = np.array([np.minimum(0, np.sign(Ns[a]) * Xlist[a] @ uBest)
-        #                    for a in range(len(Xlist))])
-
-        # Yterms = np.array([np.sign(Ns[a]) * Ylist[a] @ (1/uBest) for a in range(len(Ylist))])
+    #         result = scipy.optimize(SUSYtwo, args=(matrix, Iorder, Ns, Xlist, Ylist, eps), bounds=(eps,1/eps))
 
 
-    return susyBest, uBest, XtermsBest, YtermsBest
+    return valBest, uBest, XtermsBest, YtermsBest
 
 
-def S3(x):
-    return x@x - 1
+def SUSYtwo(uf, matrix, Iorder, Ns, Xlist, Ylist, eps):
 
-def SUSYfunc(x, Ns, Xlist, Ylist):
+    uI = UI(uf, matrix, Ylist[Iorder[2:]], Iorder, eps)
 
-    Xterms = np.array([np.minimum(0, np.sign(Ns[a]) * Xlist[a] @ x) for a in range(len(Xlist))])
-    Yterms = np.array([np.sign(Ns[a]) * Ylist[a] @ (1/x) for a in range(len(Ylist))])
+    Xterms = np.array([np.minimum(0, np.sign(Ns[a]) * Xlist[a] @ uI)
+                       for a in range(len(Xlist))])
 
-    return Xterms@Xterms + Yterms@Yterms
+    Yterms = np.array([np.sign(Ns[a]) * Ylist[a] @ (1/uI) for a in range(len(Ylist))])
 
-
-def MSSM(Ns, Xlist, Ylist):
-
-    # filler branes have all YI=0
-    filler = [YI@YI == 0 for YI in Ylist]
-
-    # SU(3) factors
-    SU3inds = np.where((Ns == 3) * (not filler))[0]
-
-    # SU(2) factors
-    SU2inds = np.where((Ns == 2) * (not filler))[0]
-
-    # USp(1) (=SU(2)) factors
-    USp1inds = np.where((Ns == 1) * filler)[0]
-
-    gaugeGroupDist = max(0, 1 - len(SU3inds)) + max(0, 1 - len(SU2inds) - len(USp1inds))
-
-    if gaugeGroupDist == 0:
-        # contains SU(3) x SU(2) x U(1)
-
-        # loop over ways to pick which factors correspond to SM gauge group
-        for i3 in SU3inds:
-            for i2 in np.block([SU2inds, USp1inds]):
-                1
+    return Yterms@Yterms + Xterms@Xterms
 
 
-    MSSMbonus = 0.25 * np.exp(-gaugeGroupDist)
+def UI(uf, matrix, Ys, Iorder, eps):
+
+    uiInv = np.dot(np.linalg.inv(matrix),
+                   -Ys[:, Iorder[0]] - Ys[:, Iorder[1]] * 1/uf)
+
+    if min(uiInv) < eps or max(uiInv) > eps:
+        return [0, 0, 0, 0]
+
+    uI = np.zeros(4)
+    uI[Iorder[0]] = 1
+    uI[Iorder[1]] = uf
+    uI[Iorder[2:]] = 1/uiInv
+
+    uI /= np.sqrt(uI@uI)
+
+    return uI
 
 
-    return MSSMbonus
+# def MSSM(Ns, Xlist, Ylist):
+
+#     # filler branes have all YI=0
+#     filler = [YI@YI == 0 for YI in Ylist]
+
+#     # SU(3) factors
+#     SU3inds = np.where((Ns == 3) * (not filler))[0]
+
+#     # SU(2) factors
+#     SU2inds = np.where((Ns == 2) * (not filler))[0]
+
+#     # USp(1) (=SU(2)) factors
+#     USp1inds = np.where((Ns == 1) * filler)[0]
+
+#     gaugeGroupDist = max(0, 1 - len(SU3inds)) + max(0, 1 - len(SU2inds) - len(USp1inds))
+
+#     if gaugeGroupDist == 0:
+#         # contains SU(3) x SU(2) x U(1)
+
+#         # loop over ways to pick which factors correspond to SM gauge group
+#         for i3 in SU3inds:
+#             for i2 in np.block([SU2inds, USp1inds]):
+#                 1
+
+
+#     MSSMbonus = 0.25 * np.exp(-gaugeGroupDist)
+
+
+#     return MSSMbonus
+
+
+def saveSolutions(stacks, filePath):
+
+    # try:
+    #     # load previously saved solutions
+    #     saved = np.load(filePath)
+    #     # add new solutions and remove duplicates
+    #     toSave = np.unique(np.append(saved, stacks, axis=0), axis=0)
+    #     newlySaved = len(toSave) - len(saved)
+    # except FileNotFoundError:
+    #     # no previously saved solutions
+    #     # just remove duplicates
+    #     toSave = np.unique(stacks, axis=0)
+    #     newlySaved = len(toSave)
+    
+    # # save to file
+    # np.save(filePath, toSave)
+    
+    # print('\t' + ' '*6 + 'New solutions saved : %4d' % newlySaved)
+
+    try:
+        saved = np.load(filePath)
+        toSave = np.append(saved, len(stacks))
+    except FileNotFoundError:
+        toSave = np.array([len(stacks)])
+
+    np.save(filePath, toSave)
