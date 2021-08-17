@@ -378,17 +378,6 @@ class individual:
         method = sum(cumulative < rnd)
 
         if method == 0:
-            # A 1-point crossover method where the child
-            # has the same number of stacks as parent1 (self).
-            newStacks = self.stacks.copy()
-            rows = np.random.randint(1, min(len(parent2.stacks)+1, len(self.stacks)))
-
-            if np.random.rand() < 0.5:
-                newStacks[:rows] = parent2.stacks[:rows]
-            else:
-                newStacks[-rows:] = parent2.stacks[-rows:]
-
-        elif method == 1:
             # A 1-point crossover method. Pick a random number
             # of rows in each parent and splice together by rows.
             rows1 = np.inf
@@ -402,22 +391,19 @@ class individual:
             newStacks[:rows1] = self.stacks[:rows1]
             newStacks[-rows2:] = parent2.stacks[-rows2:]
 
-        elif method == 2:
-            # Same as method 0 except that the splice occurs in the middle of a stack
+        elif method == 1:
+            # A 1-point crossover method where the child
+            # has the same number of stacks as parent1 (self).
             newStacks = self.stacks.copy()
-            rows = np.random.randint(min(len(parent2.stacks), len(self.stacks)))
-            col = np.random.randint(1, 7)
+            rows = np.random.randint(1, min(len(parent2.stacks)+1, len(self.stacks)))
 
             if np.random.rand() < 0.5:
                 newStacks[:rows] = parent2.stacks[:rows]
-                newStacks[rows, :col] = parent2.stacks[rows, :col]
             else:
-                newStacks[-(rows+1):] = parent2.stacks[-(rows+1):]
-                newStacks[-(rows+1), :col] = self.stacks[len(self.stacks)-(rows+1), :col]
+                newStacks[-rows:] = parent2.stacks[-rows:]
 
-
-        elif method == 3:
-            # Same as method 1 except that the splice occurs in the middle of a stack
+        elif method == 2:
+            # Same as method 0 except that the splice occurs in the middle of a stack
             rows1 = np.inf
             rows2 = np.inf
             col = np.random.randint(1, 7)
@@ -432,6 +418,20 @@ class individual:
                 newStacks[-rows2:] = parent2.stacks[-rows2:]
             newStacks[rows1, :col] = self.stacks[rows1, :col]
             newStacks[rows1, col:] = parent2.stacks[-(rows2+1), col:]
+
+
+        elif method == 3:
+            # Same as method 1 except that the splice occurs in the middle of a stack
+            newStacks = self.stacks.copy()
+            rows = np.random.randint(min(len(parent2.stacks), len(self.stacks)))
+            col = np.random.randint(1, 7)
+
+            if np.random.rand() < 0.5:
+                newStacks[:rows] = parent2.stacks[:rows]
+                newStacks[rows, :col] = parent2.stacks[rows, :col]
+            else:
+                newStacks[-(rows+1):] = parent2.stacks[-(rows+1):]
+                newStacks[-(rows+1), :col] = self.stacks[len(self.stacks)-(rows+1), :col]
 
         else:
             # Clone parent1 (self)
