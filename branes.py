@@ -30,6 +30,8 @@ def GA(nRuns, nGens, popSize, nSurvive, bix2, UI, maxStacks, filler, signfix,  #
         for e in pop.individuals:
             e.computeFitness(bix2, UI, filler, weights, tadScale, susyScale)
 
+        rewardHist = np.zeros([nGens+1, popSize, 4])
+        rewardHist[0] = pop.getRewards()
 
         if progress:
 
@@ -93,6 +95,7 @@ def GA(nRuns, nGens, popSize, nSurvive, bix2, UI, maxStacks, filler, signfix,  #
                 firstFound = True
                 print('First TKS : generation %d' % g)
 
+            rewardHist[g] = pop.getRewards()
 
             if progress:
                 # Update fitness summary statistics
@@ -185,6 +188,7 @@ def GA(nRuns, nGens, popSize, nSurvive, bix2, UI, maxStacks, filler, signfix,  #
         print('')
         pop.displayFittest(1, bix2)
 
+        return rewardHist
 
 
 class population:
@@ -251,6 +255,8 @@ class population:
         bestn = np.argsort(fits)[-1:-(n+1):-1]
         return self.individuals[bestn]
 
+    def getRewards(self):
+        return np.array([e.rewards for e in self.individuals])
 
     def getConsistent(self, s):
         # s should be a string: T, K, S, TK, TS, KS, or TKS
@@ -498,12 +504,10 @@ class individual:
             SReward = np.min((1 + (abs(susyX) + abs(susyY))/susyScale) ** (-1))
             MSSMReward = MSSM(Ns, Xlist, Ylist, bix2)
 
+            self.rewards = np.array([TReward, KReward, SReward, MSSMReward])
 
             # Fitness is weighted sum of rewards
-            self.fitness = + weights[0] * TReward \
-                           + weights[1] * KReward \
-                           + weights[2] * SReward \
-                           + weights[3] * MSSMReward
+            self.fitness = weights @ self.rewards
 
 
             # Record which consistency conditions are satisfied
