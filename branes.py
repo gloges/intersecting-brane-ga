@@ -66,7 +66,7 @@ def GA(nRuns, nGens, popSize, nSurvive, bix2, UI, maxStacks, filler, signfix,  #
         for g in gIter:
 
             # Breed next generation
-            pop.breed(nSurvive, bix2, signfix, xoverProbs, mutRates)
+            pop.breed(nSurvive, bix2, filler, signfix, xoverProbs, mutRates)
 
             if progress:
                 # Progress bar serves as iterator
@@ -200,7 +200,7 @@ class population:
         self.individuals = np.array([individual(maxStacks) for i in range(size)])
 
 
-    def breed(self, nSurvive, bix2, signfix, xoverProbs, mutRates):
+    def breed(self, nSurvive, bix2, filler, signfix, xoverProbs, mutRates):
 
         # Create empty array for next generation and copy
         # over 'nSurvive' of the fittest individuals
@@ -208,7 +208,9 @@ class population:
         newIndividuals[:nSurvive] = self.getFittest(nSurvive)
 
         # Loop until next generation is full
-        for i in range(nSurvive, self.size):
+        i = nSurvive
+
+        while i < self.size:
 
             # Select two parents
             parent1 = self.binaryTournament()
@@ -222,13 +224,15 @@ class population:
             # - Correct signs of type A'/B'/C'
             # - Bring to standard form
             child.mutate(mutRates, bix2)
-            child.makeValid()
+            child.makeValid(filler, bix2)
             if signfix:
                 child.correctSigns(bix2)
             child.standardize()
 
-            # Add child to next generation
-            newIndividuals[i] = child
+            if len(child.stacks) >= 2:
+                # Add child to next generation
+                newIndividuals[i] = child
+                i += 1
 
         # Update population to newly created generation
         self.individuals = newIndividuals
@@ -297,11 +301,11 @@ class individual:
         self.fitnessDetails = np.empty(5)
 
         # Clean up
-        self.makeValid()
+        self.makeValid(False, [0, 0, 0])
         self.standardize()
 
 
-    def makeValid(self):
+    def makeValid(self, filler, bix2):
         # Check that stack sizes (Na) are positive
         # and winding numbers are coprime, fixing if necessary
 
@@ -344,6 +348,18 @@ class individual:
                     index = 2*i + np.random.choice([1, 2])
                     while np.gcd(stack[2*i+1], stack[2*i+2]) > 1:
                         stack[index] += direction
+
+
+        if filler:
+            # If fillers are added by hand, remove all 'explicit' filler stacks
+
+            XYlist = np.array([getStackXY(stack, bix2) for stack in self.stacks])
+            Ylist = XYlist[:, 4:]
+
+            fillers = np.where([YI@YI == 0 for YI in Ylist])[0]
+
+            self.stacks = np.delete(self.stacks, fillers, axis=0)
+
 
 
     def standardize(self):
@@ -841,11 +857,21 @@ def MSSM(Ns, Xlist, Ylist, bix2):
     # U3Sp2U1U1dist = max(0, 1-nU3) + max(0, 1-nSp1) + max(0, 2-nU1)
     # U4U2U2dist    = max(0, 1-nU4) + max(0, 2-nU2)
 
-    MSSMbonus = (1 + U3U2U1U1dist) ** (-1)
+    gaugeGpBonus = 1 - U3U2U1U1dist/4.0
 
-    # if U3U2U1U1dist == 0:
-    #     # Check spectrum
-    #     1
+    chiralDistBest = np.inf
+
+    if U3U2U1U1dist == 0:
+        # Check spectrum
+
+        for iU3 in U3inds:
+            for iU2 in U2inds:
+                quarkMult = Xlist[iU3] @ Ylist[iU2] - Ylist[iU3] @ Xlist[iU2]
+
+                chiralDist = np.abs(quarkMult - 3)
+
+                if chiralDist < chiralDistBest:
+                    chiralDistBest = chiralDist
 
     # if U3Sp2U1U1dist == 0:
     #     # Check spectrum
@@ -855,22 +881,23 @@ def MSSM(Ns, Xlist, Ylist, bix2):
     #     # Check spectrum
     #     1
 
+    MSSMbonus = 0.5 * gaugeGpBonus + 0.5 * 1/(1 + chiralDistBest)
 
 
     return MSSMbonus
 
 
-# def Iab(stacka, stackb):
+def Iab(stacka, stackb, bix2):
 
-#     nai = stacka[1::2]
-#     mai = stacka[2::2]
+    nai = stacka[1::2]
+    mai = stacka[2::2]
 
-#     nbi = stackb[1::2]
-#     mbi = stackb[2::2]
+    nbi = stackb[1::2]
+    mbi = stackb[2::2]
 
-#     factors = nai*mbi - mai*nbi
+    factors = nai*mbi - mai*nbi
 
-#     return factors[0] * factors[1] * factors[2]
+    return factors[0] * factors[1] * factors[2]
 
 
 def saveSolutions(stacks, filePath):
